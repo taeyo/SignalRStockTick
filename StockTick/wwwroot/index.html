@@ -1,0 +1,221 @@
+﻿<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+    <title>ASP.NET Core SignalR Stock Ticker</title>
+    <link href="StockTicker.css" rel="stylesheet" />
+</head>
+<body>
+    <h1>Stock Ticker Sample</h1>
+    <input type="button" id="open" value="Open Market" />
+    <input type="button" id="close" value="Close Market" disabled="disabled" />
+    <input type="button" id="reset" value="Reset" />
+    <h2>Live Stock Table</h2>
+    <div id="stockTable">
+        <table border="1">
+            <thead>
+                <tr><th>Symbol</th><th>Price</th><th>Open</th><th>High</th><th>Low</th><th>Change</th><th>%</th></tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </div>
+    <h2>Live Stock Ticker</h2>
+    <div id="stockTicker">
+        <div class="inner">
+            <ul position="absolute"></ul>
+        </div>
+    </div>
+
+    <!--Script references. -->
+    <!--Reference the jQuery library. -->
+    <script src="jquery-1.6.4.min.js"></script>
+    <!--Reference the SignalR library. -->
+    <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/@aspnet/signalr@1.0.0/dist/browser/signalr.min.js"></script>
+    <script type="text/javascript">
+        // Crockford's supplant method (poor man's templating)
+        if (!String.prototype.supplant) {
+            String.prototype.supplant = function (o) {
+                return this.replace(/{([^{}]*)}/g,
+                    function (a, b) {
+                        var r = o[b];
+                        return typeof r === 'string' || typeof r === 'number' ? r : a;
+                    }
+                );
+            };
+        }
+
+        var stockTable = document.getElementById('stockTable');
+        var stockTableBody = stockTable.getElementsByTagName('tbody')[0];
+        var rowTemplate = '<td>{symbol}</td><td>{price}</td><td>{dayOpen}</td><td>{dayHigh}</td><td>{dayLow}</td><td class="changeValue"><span class="dir {directionClass}">{direction}</span> {change}</td><td>{percentChange}</td>';
+        var tickerTemplate = '<span class="symbol">{symbol}</span> <span class="price">{price}</span> <span class="changeValue"><span class="dir {directionClass}">{direction}</span> {change} ({percentChange})</span>';
+        var stockTicker = document.getElementById('stockTicker');
+        var stockTickerBody = stockTicker.getElementsByTagName('ul')[0];
+        var up = '▲';
+        var down = '▼';
+
+        //document.addEventListener('DOMContentLoaded', function () {
+        $(function () {
+
+            function bindConnectionMessage(connection) {
+                //클라이언트에서 OpenMarket 이벤트 수신 시 동작
+                connection.on('openMarket', function () {
+                    marketOpened();
+                    startStreaming(connection);
+                });
+                //클라이언트에서 CloseMarket 이벤트 수신 시 동작
+                connection.on('closeMarket', function () {
+                    marketClosed();
+                });
+                connection.onclose(onConnectionError);
+            }
+
+            function onConnected(connection) {
+                console.log('connection started. connection ID =' + connection);
+
+                //Promise 반환을 사용하려는 경우에는 send가 아니라 invoke 사용
+                connection.invoke('getAllStocks').then(function (stocks) {
+                    for (let i = 0; i < stocks.length; i++) {
+                        displayStock(stocks[i]);
+                    }
+                });
+
+                //Promise 반환을 사용하려는 경우에는 send가 아니라 invoke 사용
+                connection.invoke('getMarketState').then(function (state) {
+                    console.log("state : " + state)
+                    if (state === 'Open') {
+                        marketOpened();
+                        startStreaming();
+                    } else {
+                        marketClosed();
+                    }
+                });
+
+                // Open Market 버튼 클릭
+                document.getElementById('open').onclick = function () {
+                    connection.send("openMarket");
+                }
+
+                // Close Market 버튼 클릭
+                document.getElementById('close').onclick = function () {
+                    connection.send("closeMarket");
+                }
+
+                // reset 버튼 클릭
+                document.getElementById('reset').onclick = function () {
+                    connection.send('reset', function () {
+                        connection.invoke("getAllStocks").then(function (stocks) {
+                            for (let i = 0; i < stocks.length; ++i) {
+                                displayStock(stocks[i]);
+                            }
+                        });
+                    });
+                }
+            }
+
+            function onConnectionError(error) {
+                if (error && error.message) {
+                    console.log(error.message);
+                }
+                var modal = document.getElementById('myModal');
+                modal.classList.add('in');
+                modal.style = 'display: block;';
+            }
+
+            function startStreaming(connection) {
+                connection.stream("StreamStocks").subscribe({
+                    close: false,
+                    next: displayStock,
+                    error: function (err) {
+                        logger.log(err);
+                    }
+                });
+            }
+
+            var connection = new signalR.HubConnectionBuilder()
+                .withUrl('/stock')
+                .build();
+
+            bindConnectionMessage(connection);
+
+            connection.start()
+                .then(function () {
+                    onConnected(connection);
+                })
+            
+            var pos = 30;
+            var tickerInterval;
+            stockTickerBody.style.marginLeft = '30px';
+
+            function moveTicker() {
+                pos--;
+                if (pos < -600) {
+                    pos = 500;
+                }
+
+                stockTickerBody.style.marginLeft = pos + 'px';
+            }
+
+            function marketOpened() {
+                tickerInterval = setInterval(moveTicker, 20);
+                document.getElementById('open').setAttribute("disabled", "disabled");
+                document.getElementById('close').removeAttribute("disabled");
+                document.getElementById('reset').setAttribute("disabled", "disabled");
+            }
+
+            function marketClosed() {
+                if (tickerInterval) {
+                    clearInterval(tickerInterval);
+                }
+                document.getElementById('open').removeAttribute("disabled");
+                document.getElementById('close').setAttribute("disabled", "disabled");
+                document.getElementById('reset').removeAttribute("disabled");
+            }
+
+            function displayStock(stock) {
+                var displayStock = formatStock(stock);
+                addOrReplaceStock(stockTableBody, displayStock, 'tr', rowTemplate);
+                addOrReplaceStock(stockTickerBody, displayStock, 'li', tickerTemplate);
+            }
+
+            function addOrReplaceStock(table, stock, type, template) {
+                var child = createStockNode(stock, type, template);
+
+                // try to replace
+                var stockNode = document.querySelector(type + "[data-symbol=" + stock.symbol + "]");
+                if (stockNode) {
+                    var change = stockNode.querySelector(".changeValue");
+                    var prevChange = parseFloat(change.childNodes[1].data);
+                    if (prevChange > stock.change) {
+                        child.className = "decrease";
+                    }
+                    else if (prevChange < stock.change) {
+                        child.className = "increase";
+                    }
+                    else {
+                        return;
+                    }
+                    table.replaceChild(child, stockNode);
+                } else {
+                    // add new stock
+                    table.appendChild(child);
+                }
+            }
+
+            function formatStock(stock) {
+                stock.price = stock.price.toFixed(2);
+                stock.percentChange = (stock.percentChange * 100).toFixed(2) + '%';
+                stock.direction = stock.change === 0 ? '' : stock.change >= 0 ? up : down;
+                stock.directionClass = stock.change === 0 ? 'even' : stock.change >= 0 ? 'up' : 'down';
+                return stock;
+            }
+
+            function createStockNode(stock, type, template) {
+                var child = document.createElement(type);
+                child.setAttribute('data-symbol', stock.symbol);
+                child.setAttribute('class', stock.symbol);
+                child.innerHTML = template.supplant(stock);
+                return child;
+            }
+        });
+    </script>
+</body>
+</html>
