@@ -1,4 +1,3 @@
-# SignalRStockTick
+# StockTickR, Azure SignalR Service
 
-This is an ASP.NET CORE version of StockTickR sample using Azure SignalR Service.
-it's private test one.
+This sample source is asp.net core version app of StockTickR sample using Azure SignalR Service.
